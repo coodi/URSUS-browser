@@ -1,0 +1,9 @@
+target_os = "android"
+target_cpu = "arm64"
+is_debug = true
+is_component_build = false
+symbol_level = 1
+
+# Keep Chromium security mechanisms enabled. Do not disable sandbox, site
+# isolation, certificate transparency, or TLS validation features here.
+
