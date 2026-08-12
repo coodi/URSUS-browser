@@ -9,6 +9,10 @@ on Chromium technology. The default Android UI theme is dark and uses
 logo-inspired URSUS green, blue, and orange as the primary accent palette. When
 the verified certificate chain uses the bundled Russian trusted root, the
 Android address bar shows a Ministry of Digital Development shield indicator.
+The indicator popup links to certificate management, where the bundled root can
+be enabled or disabled. If the root is disabled and a site needs it, URSUS
+browser shows a Ministry-branded certificate error page with a direct
+management button instead of the generic certificate error.
 
 URSUS browser is intended to be built from an upstream Chromium source checkout
 as a standalone Android application. The browser must keep Chromium and
@@ -26,6 +30,8 @@ only inside this application.
 - Users must be able to disable the extra root with `russian_ca.enabled`.
 - The Russian-root indicator is based on the verified certificate chain, not on
   a host allowlist.
+- Russian-root-disabled errors must offer a direct path back to the scoped
+  certificate management page.
 
 ## Current Checkout Status
 
@@ -122,6 +128,7 @@ Chromium-side unit tests should cover:
 - normal public CA behavior;
 - Russian-root chains accepted when `russian_ca.enabled` is true;
 - Russian-root support disabled;
+- direct management from the Russian-root-disabled error page;
 - expired Russian-root chain rejected;
 - hostname mismatch rejected.
 

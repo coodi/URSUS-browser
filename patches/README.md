@@ -11,6 +11,7 @@ android_app_icons.patch
 android_branding_resources.patch
 russian_ca_chromium.patch
 russian_ca_indicator_android.patch
+russian_ca_management_android.patch
 ```
 
 `android_app_name.patch` changes the Android Chromium application label and
@@ -49,3 +50,10 @@ trusted root. It shows a small shield with the Ministry of Digital Development
 logo and displays the message `Сайт использует корневой сертификат Минцифры`
 when tapped. The indicator is certificate-chain based and does not use a host
 allowlist.
+
+`russian_ca_management_android.patch` adds the Android management UI for the
+scoped Russian root certificate. The omnibox shield popup has a management
+button. When the root is disabled and the failed certificate chain contains the
+bundled Russian root, the SSL interstitial is changed to a Ministry-branded
+error page with a shield watermark and a primary `Управление сертификатом`
+button that opens the management page.

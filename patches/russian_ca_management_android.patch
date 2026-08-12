@@ -1,0 +1,812 @@
+diff --git a/chrome/android/BUILD.gn b/chrome/android/BUILD.gn
+index 5a610c924b..ba7a1bea04 100644
+--- a/chrome/android/BUILD.gn
++++ b/chrome/android/BUILD.gn
+@@ -3153,6 +3153,7 @@ if (_is_default_toolchain) {
+       "java/src/org/chromium/chrome/browser/safe_browsing/SafeBrowsingReferringAppBridge.java",
+       "java/src/org/chromium/chrome/browser/safe_browsing/SafeBrowsingSettingsNavigation.java",
+       "java/src/org/chromium/chrome/browser/safe_browsing/SafeBrowsingSuspiciousSiteDialogBridge.java",
++      "java/src/org/chromium/chrome/browser/ssl/RussianCertificateSettingsNavigation.java",
+       "java/src/org/chromium/chrome/browser/segmentation_platform/ContextualPageActionController.java",
+       "java/src/org/chromium/chrome/browser/sharing/sms_fetcher/SmsFetcherMessageHandler.java",
+       "java/src/org/chromium/chrome/browser/signin/SigninBridge.java",
+diff --git a/chrome/android/chrome_java_sources.gni b/chrome/android/chrome_java_sources.gni
+index a22cc7be71..af74f3a508 100644
+--- a/chrome/android/chrome_java_sources.gni
++++ b/chrome/android/chrome_java_sources.gni
+@@ -1044,6 +1044,7 @@ chrome_java_sources = [
+   "java/src/org/chromium/chrome/browser/safe_browsing/SafeBrowsingSettingsNavigation.java",
+   "java/src/org/chromium/chrome/browser/safe_browsing/SafeBrowsingSuspiciousSiteDialogBridge.java",
+   "java/src/org/chromium/chrome/browser/safety_check/SafetyCheckUpdatesDelegateImpl.java",
++  "java/src/org/chromium/chrome/browser/ssl/RussianCertificateSettingsNavigation.java",
+   "java/src/org/chromium/chrome/browser/screenshotprovider/ScreenshotContentProviderImpl.java",
+   "java/src/org/chromium/chrome/browser/searchwidget/SearchActivity.java",
+   "java/src/org/chromium/chrome/browser/searchwidget/SearchActivityClientImpl.java",
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/ssl/RussianCertificateSettingsNavigation.java b/chrome/android/java/src/org/chromium/chrome/browser/ssl/RussianCertificateSettingsNavigation.java
+new file mode 100644
+index 0000000000..5574483caa
+--- /dev/null
++++ b/chrome/android/java/src/org/chromium/chrome/browser/ssl/RussianCertificateSettingsNavigation.java
+@@ -0,0 +1,28 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++package org.chromium.chrome.browser.ssl;
++
++import android.content.Context;
++
++import org.jni_zero.CalledByNative;
++
++import org.chromium.build.annotations.NullMarked;
++import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
++import org.chromium.ui.base.WindowAndroid;
++
++/** Bridge between native SSL interstitial code and Russian certificate settings. */
++@NullMarked
++public class RussianCertificateSettingsNavigation {
++    private RussianCertificateSettingsNavigation() {}
++
++    @CalledByNative
++    private static void showRussianCertificateSettings(WindowAndroid window) {
++        if (window == null) return;
++        Context currentContext = window.getContext().get();
++        if (currentContext == null) return;
++        SettingsNavigationFactory.createSettingsNavigation()
++                .startSettings(currentContext, RussianCertificateSettingsFragment.class);
++    }
++}
+diff --git a/chrome/browser/interstitials/chrome_settings_page_helper.cc b/chrome/browser/interstitials/chrome_settings_page_helper.cc
+index 86a8824bfc..4c6d38c536 100644
+--- a/chrome/browser/interstitials/chrome_settings_page_helper.cc
++++ b/chrome/browser/interstitials/chrome_settings_page_helper.cc
+@@ -14,6 +14,7 @@
+ 
+ #if BUILDFLAG(IS_ANDROID)
+ #include "chrome/browser/safe_browsing/android/safe_browsing_settings_navigation_android.h"
++#include "chrome/browser/ssl/android/russian_certificate_settings_navigation_android.h"
+ #include "components/safe_browsing/core/common/safe_browsing_settings_metrics.h"
+ #else
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+@@ -73,6 +74,11 @@ void ChromeSettingsPageHelper::OpenAdvancedProtectionSettings(
+   safe_browsing::ShowAdvancedProtectionSettings(
+       web_contents.GetTopLevelNativeWindow());
+ }
++
++void ChromeSettingsPageHelper::OpenRussianCertificateSettings(
++    content::WebContents& web_contents) {
++  ssl::ShowRussianCertificateSettings(web_contents.GetTopLevelNativeWindow());
++}
+ #endif  // BUILDFLAG(IS_ANDROID)
+ 
+ }  // namespace security_interstitials
+diff --git a/chrome/browser/interstitials/chrome_settings_page_helper.h b/chrome/browser/interstitials/chrome_settings_page_helper.h
+index 83780a0ad5..38248110dc 100644
+--- a/chrome/browser/interstitials/chrome_settings_page_helper.h
++++ b/chrome/browser/interstitials/chrome_settings_page_helper.h
+@@ -38,6 +38,7 @@ class ChromeSettingsPageHelper : public SettingsPageHelper {
+       const override;
+ #if BUILDFLAG(IS_ANDROID)
+   void OpenAdvancedProtectionSettings(content::WebContents&) override;
++  void OpenRussianCertificateSettings(content::WebContents&) override;
+ #endif  // BUILDFLAG(IS_ANDROID)
+ };
+ 
+diff --git a/chrome/browser/ssl/BUILD.gn b/chrome/browser/ssl/BUILD.gn
+index eee4700a0d..6f8b5fbcb3 100644
+--- a/chrome/browser/ssl/BUILD.gn
++++ b/chrome/browser/ssl/BUILD.gn
+@@ -156,6 +156,7 @@ source_set("impl") {
+     sources += [
+       "android/https_first_mode_bridge.cc",
+       "android/https_upgrades_interceptor_android.cc",
++      "android/russian_certificate_settings_navigation_android.cc",
+       "chrome_security_state_client.cc",
+       "chrome_security_state_model_delegate.cc",
+       "known_interception_disclosure_message_delegate.cc",
+diff --git a/chrome/browser/ssl/android/BUILD.gn b/chrome/browser/ssl/android/BUILD.gn
+index 11c06388d9..576da07093 100644
+--- a/chrome/browser/ssl/android/BUILD.gn
++++ b/chrome/browser/ssl/android/BUILD.gn
+@@ -18,6 +18,7 @@ android_library("java") {
+     "java/src/org/chromium/chrome/browser/ssl/HttpsFirstModeSettingsFragment.java",
+     "java/src/org/chromium/chrome/browser/ssl/HttpsFirstModeVariantPreference.java",
+     "java/src/org/chromium/chrome/browser/ssl/HttpsUpgradesInterceptor.java",
++    "java/src/org/chromium/chrome/browser/ssl/RussianCertificateSettingsFragment.java",
+   ]
+   deps = [
+     ":java_resources",
+@@ -34,6 +35,7 @@ android_library("java") {
+     "//components/prefs/android:java",
+     "//components/safe_browsing/android:safe_browsing_java",
+     "//components/user_prefs/android:java",
++    "//content/public/android:content_full_java",
+     "//third_party/androidx:androidx_annotation_annotation_java",
+     "//third_party/androidx:androidx_browser_browser_java",
+     "//third_party/androidx:androidx_core_core_java",
+@@ -53,6 +55,7 @@ android_resources("java_resources") {
+   sources = [
+     "java/res/layout/https_first_mode_variant_preference.xml",
+     "java/res/xml/https_first_mode_settings.xml",
++    "java/res/xml/russian_certificate_settings.xml",
+   ]
+   deps = [
+     "//chrome/browser/ui/android/strings:ui_strings_grd",
+diff --git a/chrome/browser/ssl/android/java/res/xml/russian_certificate_settings.xml b/chrome/browser/ssl/android/java/res/xml/russian_certificate_settings.xml
+new file mode 100644
+index 0000000000..356cae1e70
+--- /dev/null
++++ b/chrome/browser/ssl/android/java/res/xml/russian_certificate_settings.xml
+@@ -0,0 +1,17 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++Copyright 2026 The Chromium Authors
++Use of this source code is governed by a BSD-style license that can be
++found in the LICENSE file.
++-->
++
++<PreferenceScreen
++    xmlns:android="http://schemas.android.com/apk/res/android">
++
++    <org.chromium.components.browser_ui.settings.ChromeSwitchPreference
++        android:key="russian_ca_enabled"
++        android:persistent="false"
++        android:title="@string/settings_russian_certificate_title"
++        android:summary="@string/settings_russian_certificate_summary" />
++
++</PreferenceScreen>
+diff --git a/chrome/browser/ssl/android/java/src/org/chromium/chrome/browser/ssl/RussianCertificateSettingsFragment.java b/chrome/browser/ssl/android/java/src/org/chromium/chrome/browser/ssl/RussianCertificateSettingsFragment.java
+new file mode 100644
+index 0000000000..a1761147d6
+--- /dev/null
++++ b/chrome/browser/ssl/android/java/src/org/chromium/chrome/browser/ssl/RussianCertificateSettingsFragment.java
+@@ -0,0 +1,55 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++package org.chromium.chrome.browser.ssl;
++
++import android.os.Bundle;
++
++import androidx.annotation.VisibleForTesting;
++
++import org.chromium.base.supplier.MonotonicObservableSupplier;
++import org.chromium.base.supplier.ObservableSuppliers;
++import org.chromium.base.supplier.SettableMonotonicObservableSupplier;
++import org.chromium.build.annotations.NullMarked;
++import org.chromium.build.annotations.Nullable;
++import org.chromium.chrome.browser.preferences.Pref;
++import org.chromium.chrome.browser.settings.ChromeBaseSettingsFragment;
++import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
++import org.chromium.components.browser_ui.settings.SettingsUtils;
++import org.chromium.components.prefs.PrefService;
++import org.chromium.components.user_prefs.UserPrefs;
++
++/** Fragment for controlling the application-scoped Russian trusted root. */
++@NullMarked
++public class RussianCertificateSettingsFragment extends ChromeBaseSettingsFragment {
++    @VisibleForTesting static final String PREF_RUSSIAN_CA_ENABLED = "russian_ca_enabled";
++
++    private final SettableMonotonicObservableSupplier<String> mPageTitle =
++            ObservableSuppliers.createMonotonic();
++
++    @Override
++    public MonotonicObservableSupplier<String> getPageTitle() {
++        return mPageTitle;
++    }
++
++    @Override
++    public void onCreatePreferences(@Nullable Bundle savedInstanceState, @Nullable String rootKey) {
++        mPageTitle.set(getString(R.string.settings_russian_certificate_page_title));
++        SettingsUtils.addPreferencesFromResource(this, R.xml.russian_certificate_settings);
++
++        ChromeSwitchPreference russianCaSwitch = findPreference(PREF_RUSSIAN_CA_ENABLED);
++        PrefService prefs = UserPrefs.get(getProfile());
++        russianCaSwitch.setChecked(prefs.getBoolean(Pref.RUSSIAN_CA_ENABLED));
++        russianCaSwitch.setOnPreferenceChangeListener(
++                (preference, enabled) -> {
++                    prefs.setBoolean(Pref.RUSSIAN_CA_ENABLED, (boolean) enabled);
++                    return true;
++                });
++    }
++
++    @Override
++    public @AnimationType int getAnimationType() {
++        return AnimationType.PROPERTY;
++    }
++}
+diff --git a/chrome/browser/ssl/android/russian_certificate_settings_navigation_android.cc b/chrome/browser/ssl/android/russian_certificate_settings_navigation_android.cc
+new file mode 100644
+index 0000000000..9c511816fb
+--- /dev/null
++++ b/chrome/browser/ssl/android/russian_certificate_settings_navigation_android.cc
+@@ -0,0 +1,25 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ssl/android/russian_certificate_settings_navigation_android.h"
++
++#include "base/android/jni_android.h"
++#include "ui/android/window_android.h"
++
++// Must come after all headers that specialize FromJniType() / ToJniType().
++#include "chrome/android/chrome_jni_headers/RussianCertificateSettingsNavigation_jni.h"
++
++namespace ssl {
++
++void ShowRussianCertificateSettings(ui::WindowAndroid* window) {
++  if (!window) {
++    return;
++  }
++  Java_RussianCertificateSettingsNavigation_showRussianCertificateSettings(
++      base::android::AttachCurrentThread(), window->GetJavaObject());
++}
++
++}  // namespace ssl
++
++DEFINE_JNI(RussianCertificateSettingsNavigation)
+diff --git a/chrome/browser/ssl/android/russian_certificate_settings_navigation_android.h b/chrome/browser/ssl/android/russian_certificate_settings_navigation_android.h
+new file mode 100644
+index 0000000000..532e17b7bd
+--- /dev/null
++++ b/chrome/browser/ssl/android/russian_certificate_settings_navigation_android.h
+@@ -0,0 +1,16 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SSL_ANDROID_RUSSIAN_CERTIFICATE_SETTINGS_NAVIGATION_ANDROID_H_
++#define CHROME_BROWSER_SSL_ANDROID_RUSSIAN_CERTIFICATE_SETTINGS_NAVIGATION_ANDROID_H_
++
++#include "ui/android/window_android.h"
++
++namespace ssl {
++
++void ShowRussianCertificateSettings(ui::WindowAndroid* window);
++
++}  // namespace ssl
++
++#endif  // CHROME_BROWSER_SSL_ANDROID_RUSSIAN_CERTIFICATE_SETTINGS_NAVIGATION_ANDROID_H_
+diff --git a/chrome/browser/ssl/chrome_security_blocking_page_factory.cc b/chrome/browser/ssl/chrome_security_blocking_page_factory.cc
+index 0f1ea1062a..57a9d9cf5b 100644
+--- a/chrome/browser/ssl/chrome_security_blocking_page_factory.cc
++++ b/chrome/browser/ssl/chrome_security_blocking_page_factory.cc
+@@ -12,6 +12,7 @@
+ #include "chrome/browser/browser_process_platform_part.h"
+ #include "chrome/browser/history/history_service_factory.h"
+ #include "chrome/browser/interstitials/chrome_settings_page_helper.h"
++#include "chrome/browser/net/russian_ca.h"
+ #include "chrome/browser/net/secure_dns_config.h"
+ #include "chrome/browser/net/stub_resolver_config_reader.h"
+ #include "chrome/browser/policy/profile_policy_connector.h"
+@@ -27,6 +28,8 @@
+ #include "chrome/browser/ui/navigator/browser_navigator.h"
+ #include "chrome/common/channel_info.h"
+ #include "chrome/common/chrome_features.h"
++#include "chrome/common/pref_names.h"
++#include "components/prefs/pref_service.h"
+ #include "components/safe_browsing/core/browser/safe_browsing_metrics_collector.h"
+ #include "components/security_interstitials/content/content_metrics_helper.h"
+ #include "components/security_interstitials/content/settings_page_helper.h"
+@@ -34,6 +37,7 @@
+ #include "components/security_interstitials/core/controller_client.h"
+ #include "components/security_interstitials/core/metrics_helper.h"
+ #include "content/public/browser/web_contents.h"
++#include "net/cert/x509_util.h"
+ 
+ #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+ #include "base/enterprise_util.h"
+@@ -135,6 +139,28 @@ void LogSafeBrowsingSecuritySensitiveAction(
+   }
+ }
+ 
++bool CertificateListContainsBundledRussianRoot(
++    const net::X509Certificate* certificate) {
++  if (!certificate) {
++    return false;
++  }
++  for (const auto& cert_buffer : certificate->cert_buffers()) {
++    if (russian_ca::IsBundledTrustedRoot(
++            net::x509_util::CryptoBufferAsSpan(cert_buffer.get()))) {
++      return true;
++    }
++  }
++  return false;
++}
++
++bool IsRussianRootDisabledError(Profile* profile, const net::SSLInfo& ssl_info) {
++  if (!profile || profile->GetPrefs()->GetBoolean(prefs::kRussianCAEnabled)) {
++    return false;
++  }
++  return CertificateListContainsBundledRussianRoot(ssl_info.unverified_cert.get()) ||
++         CertificateListContainsBundledRussianRoot(ssl_info.cert.get());
++}
++
+ }  // namespace
+ 
+ std::unique_ptr<SSLBlockingPage>
+@@ -162,9 +188,11 @@ ChromeSecurityBlockingPageFactory::CreateSSLPage(
+ 
+   std::unique_ptr<SSLBlockingPage> page;
+ 
++  Profile* profile = Profile::FromBrowserContext(web_contents->GetBrowserContext());
+   page = std::make_unique<SSLBlockingPage>(
+       web_contents, cert_error, ssl_info, request_url, options_mask,
+       time_triggered, support_url, overridable,
++      IsRussianRootDisabledError(profile, ssl_info),
+       /*can_show_enhanced_protection_message=*/true,
+       std::move(controller_client));
+ 
+diff --git a/chrome/browser/ui/android/omnibox/BUILD.gn b/chrome/browser/ui/android/omnibox/BUILD.gn
+index 5737b48a29..a22e15251e 100644
+--- a/chrome/browser/ui/android/omnibox/BUILD.gn
++++ b/chrome/browser/ui/android/omnibox/BUILD.gn
+@@ -244,6 +244,7 @@ android_library("java") {
+     "//chrome/browser/search_engines/android:java",
+     "//chrome/browser/settings:factory_java",
+     "//chrome/browser/share:java",
++    "//chrome/browser/ssl/android:java",
+     "//chrome/browser/signin/services/android:java",
+     "//chrome/browser/tab:java",
+     "//chrome/browser/tabmodel:java",
+diff --git a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/status/StatusMediator.java b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/status/StatusMediator.java
+index c9daed8fe1..af2e16071e 100644
+--- a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/status/StatusMediator.java
++++ b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/status/StatusMediator.java
+@@ -6,6 +6,8 @@ package org.chromium.chrome.browser.omnibox.status;
+ 
+ import static org.chromium.build.NullUtil.assumeNonNull;
+ 
++import android.app.Activity;
++import android.app.AlertDialog;
+ import android.content.Context;
+ import android.content.res.Resources;
+ import android.graphics.Bitmap;
+@@ -44,6 +46,8 @@ import org.chromium.chrome.browser.omnibox.styles.OmniboxImageSupplier;
+ import org.chromium.chrome.browser.omnibox.styles.OmniboxResourceProvider;
+ import org.chromium.chrome.browser.page_info.ChromePageInfoHighlight;
+ import org.chromium.chrome.browser.profiles.Profile;
++import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
++import org.chromium.chrome.browser.ssl.RussianCertificateSettingsFragment;
+ import org.chromium.chrome.browser.tab.Tab;
+ import org.chromium.chrome.browser.theme.ThemeUtils;
+ import org.chromium.chrome.browser.ui.extensions.ExtensionUi;
+@@ -74,7 +78,6 @@ import org.chromium.content_public.browser.WebContents;
+ import org.chromium.ui.base.DeviceFormFactor;
+ import org.chromium.ui.base.WindowAndroid;
+ import org.chromium.ui.modelutil.PropertyModel;
+-import org.chromium.ui.widget.Toast;
+ import org.chromium.url.GURL;
+ 
+ import java.util.Objects;
+@@ -96,6 +99,7 @@ public class StatusMediator
+     private final OmniboxResourceProvider mResourceProvider;
+     private final LocationBarDataProvider mLocationBarDataProvider;
+     private final PermissionStatusHandler mPermissionStatusHandler;
++    private final WindowAndroid mWindowAndroid;
+     private final Handler mIconTaskHandler = new Handler();
+     private final PageInfoAction mPageInfoAction;
+     private final NonNullObservableSupplier<@FuseboxState Integer> mFuseboxStateSupplier;
+@@ -183,6 +187,7 @@ public class StatusMediator
+         mLocationBarDataProvider = locationBarDataProvider;
+         mTemplateUrlServiceSupplier = templateUrlServiceSupplier;
+         mShowStatusIconForSecureOrigins = !isPageInfoMovedToAppMenu();
++        mWindowAndroid = windowAndroid;
+         mTemplateUrlServiceSupplier.onAvailable(
+                 (templateUrlService) -> {
+                     templateUrlService.addObserver(this);
+@@ -674,14 +679,7 @@ public class StatusMediator
+                 if (usesRussianTrustedRoot) {
+                     toastRes = R.string.ursus_mincifry_root_certificate_indicator;
+                     descRes = R.string.ursus_mincifry_root_certificate_indicator;
+-                    clickListener =
+-                            view ->
+-                                    Toast.showAnchoredToast(
+-                                            mContext,
+-                                            view,
+-                                            mContext.getString(
+-                                                    R.string
+-                                                            .ursus_mincifry_root_certificate_indicator));
++                    clickListener = view -> showRussianCertificateDialog();
+                 } else if (isPageInfoMovedToAppMenu()) {
+                     toastRes = Resources.ID_NULL;
+                     clickListener = null;
+@@ -866,6 +864,22 @@ public class StatusMediator
+         }
+     }
+ 
++    private void showRussianCertificateDialog() {
++        Activity activity = mWindowAndroid.getActivity().get();
++        Context dialogContext = activity != null ? activity : mContext;
++        new AlertDialog.Builder(dialogContext)
++                .setMessage(R.string.ursus_mincifry_root_certificate_indicator)
++                .setPositiveButton(
++                        R.string.ursus_mincifry_root_certificate_manage,
++                        (dialog, which) ->
++                                SettingsNavigationFactory.createSettingsNavigation()
++                                        .startSettings(
++                                                dialogContext,
++                                                RussianCertificateSettingsFragment.class))
++                .setNegativeButton(R.string.cancel, null)
++                .show();
++    }
++
+     @VisibleForTesting
+     /* package */ void onFaviconFetched(GURL url, @Nullable Drawable favicon) {
+         // If we're not the most recent fetch request, give up.
+diff --git a/chrome/browser/ui/android/strings/android_chrome_strings.grd b/chrome/browser/ui/android/strings/android_chrome_strings.grd
+index 733a1c0e89..e8b3cd44ec 100644
+--- a/chrome/browser/ui/android/strings/android_chrome_strings.grd
++++ b/chrome/browser/ui/android/strings/android_chrome_strings.grd
+@@ -6895,6 +6895,15 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the browser
+       <message name="IDS_SETTINGS_HTTPS_FIRST_MODE_WITH_ADVANCED_PROTECTION_SUMMARY" desc="Secondary, continued explanation of HTTPS-Only Mode in Security settings when the user can't change the setting">
+         Use HTTPS whenever possible and get warned before loading sites that don’t support it. You can’t change this setting because you have Advanced Protection enabled.
+       </message>
++      <message name="IDS_SETTINGS_RUSSIAN_CERTIFICATE_PAGE_TITLE" desc="Title for the URSUS browser settings page that controls the Russian Ministry of Digital Development trusted root certificate.">
++        Сертификат Минцифры
++      </message>
++      <message name="IDS_SETTINGS_RUSSIAN_CERTIFICATE_TITLE" desc="Title for the URSUS browser settings toggle that enables the Russian Ministry of Digital Development trusted root certificate.">
++        Использовать корневой сертификат Минцифры
++      </message>
++      <message name="IDS_SETTINGS_RUSSIAN_CERTIFICATE_SUMMARY" desc="Summary for the URSUS browser settings toggle that enables the Russian Ministry of Digital Development trusted root certificate.">
++        Позволяет открывать сайты, чьи сертификаты выпущены через российский доверенный корневой сертификат. Проверка TLS остается включенной.
++      </message>
+ 
+       <!-- Auto-darken web content -->
+       <message name="IDS_AUTO_DARK_MESSAGE_TITLE" desc="Message shown that informs the user auto darkening of website contents has been enabled.">
+diff --git a/components/browser_ui/strings/android/browser_ui_strings.grd b/components/browser_ui/strings/android/browser_ui_strings.grd
+index b37bbc644b..abbb59c4bb 100644
+--- a/components/browser_ui/strings/android/browser_ui_strings.grd
++++ b/components/browser_ui/strings/android/browser_ui_strings.grd
+@@ -377,6 +377,9 @@
+       <message name="IDS_URSUS_MINCIFRY_ROOT_CERTIFICATE_INDICATOR" desc="Message shown for the URSUS browser omnibox indicator when the current site uses the Russian Ministry of Digital Development trusted root certificate.">
+         Сайт использует корневой сертификат Минцифры
+       </message>
++      <message name="IDS_URSUS_MINCIFRY_ROOT_CERTIFICATE_MANAGE" desc="Button text that opens management settings for the URSUS browser Russian Ministry of Digital Development trusted root certificate. [CHAR_LIMIT=20]">
++        Управление
++      </message>
+ 
+ 
+       <!-- Certificate viewer -->
+diff --git a/components/security_interstitials/content/local_self_signed_blocking_page.cc b/components/security_interstitials/content/local_self_signed_blocking_page.cc
+index ddf36903b9..1962bbd93b 100644
+--- a/components/security_interstitials/content/local_self_signed_blocking_page.cc
++++ b/components/security_interstitials/content/local_self_signed_blocking_page.cc
+@@ -28,6 +28,7 @@ LocalSelfSignedBlockingPage::LocalSelfSignedBlockingPage(
+                       time_triggered,
+                       support_url,
+                       overrideable,
++                      /*russian_root_disabled_error=*/false,
+                       can_show_enhanced_protection_message,
+                       std::move(controller_client)) {}
+ 
+diff --git a/components/security_interstitials/content/security_interstitial_controller_client.cc b/components/security_interstitials/content/security_interstitial_controller_client.cc
+index ab9e1ceedd..edfa0694e0 100644
+--- a/components/security_interstitials/content/security_interstitial_controller_client.cc
++++ b/components/security_interstitials/content/security_interstitial_controller_client.cc
+@@ -162,6 +162,10 @@ void SecurityInterstitialControllerClient::OpenEnhancedProtectionSettings() {
+ void SecurityInterstitialControllerClient::OpenAdvancedProtectionSettings() {
+   settings_page_helper_->OpenAdvancedProtectionSettings(*web_contents_);
+ }
++
++void SecurityInterstitialControllerClient::OpenRussianCertificateSettings() {
++  settings_page_helper_->OpenRussianCertificateSettings(*web_contents_);
++}
+ #endif
+ 
+ const std::string& SecurityInterstitialControllerClient::GetApplicationLocale()
+diff --git a/components/security_interstitials/content/security_interstitial_controller_client.h b/components/security_interstitials/content/security_interstitial_controller_client.h
+index f8df7a393b..602ebff46d 100644
+--- a/components/security_interstitials/content/security_interstitial_controller_client.h
++++ b/components/security_interstitials/content/security_interstitial_controller_client.h
+@@ -54,6 +54,7 @@ class SecurityInterstitialControllerClient
+ #endif
+ #if BUILDFLAG(IS_ANDROID)
+   void OpenAdvancedProtectionSettings() override;
++  void OpenRussianCertificateSettings() override;
+ #endif
+   PrefService* GetPrefService() override;
+   const std::string& GetApplicationLocale() const override;
+diff --git a/components/security_interstitials/content/settings_page_helper.h b/components/security_interstitials/content/settings_page_helper.h
+index 2e56b9fe69..fe3e71427d 100644
+--- a/components/security_interstitials/content/settings_page_helper.h
++++ b/components/security_interstitials/content/settings_page_helper.h
+@@ -37,6 +37,9 @@ class SettingsPageHelper {
+ #if BUILDFLAG(IS_ANDROID)
+   // Opens Android-OS advanced protection settings page.
+   virtual void OpenAdvancedProtectionSettings(content::WebContents&) = 0;
++
++  // Opens URSUS browser's Russian certificate settings page.
++  virtual void OpenRussianCertificateSettings(content::WebContents&) = 0;
+ #endif  // BUILDFLAG_IS_ANDROID)
+ };
+ 
+diff --git a/components/security_interstitials/content/ssl_blocking_page.cc b/components/security_interstitials/content/ssl_blocking_page.cc
+index 25a20832b2..e20a446bb1 100644
+--- a/components/security_interstitials/content/ssl_blocking_page.cc
++++ b/components/security_interstitials/content/ssl_blocking_page.cc
+@@ -54,6 +54,7 @@ SSLBlockingPage::SSLBlockingPage(
+     const base::Time& time_triggered,
+     const GURL& support_url,
+     bool overridable,
++    bool russian_root_disabled_error,
+     bool can_show_enhanced_protection_message,
+     std::unique_ptr<
+         security_interstitials::SecurityInterstitialControllerClient>
+@@ -73,6 +74,7 @@ SSLBlockingPage::SSLBlockingPage(
+                                                  options_mask,
+                                                  time_triggered,
+                                                  support_url,
++                                                 russian_root_disabled_error,
+                                                  controller())) {
+   // Creating an interstitial without showing (e.g. from chrome://interstitials)
+   // it leaks memory, so don't create it here.
+diff --git a/components/security_interstitials/content/ssl_blocking_page.h b/components/security_interstitials/content/ssl_blocking_page.h
+index 198762d370..0c3ba788f9 100644
+--- a/components/security_interstitials/content/ssl_blocking_page.h
++++ b/components/security_interstitials/content/ssl_blocking_page.h
+@@ -55,6 +55,7 @@ class SSLBlockingPage : public SSLBlockingPageBase {
+       const base::Time& time_triggered,
+       const GURL& support_url,
+       bool overrideable,
++      bool russian_root_disabled_error,
+       bool can_show_enhanced_protection_message,
+       std::unique_ptr<
+           security_interstitials::SecurityInterstitialControllerClient>
+diff --git a/components/security_interstitials/core/browser/resources/images/mincifry_shield_watermark.svg b/components/security_interstitials/core/browser/resources/images/mincifry_shield_watermark.svg
+new file mode 100644
+index 0000000000..e8eef5c3e3
+--- /dev/null
++++ b/components/security_interstitials/core/browser/resources/images/mincifry_shield_watermark.svg
+@@ -0,0 +1,7 @@
++<svg xmlns="http://www.w3.org/2000/svg" width="512" height="560" viewBox="0 0 512 560">
++  <path fill="#14324a" fill-opacity=".16" d="M256 18 432 84v125c0 153-105 288-176 323C185 497 80 362 80 209V84l176-66Z"/>
++  <path fill="#2dd4bf" fill-opacity=".22" d="M256 66 386 115v101c0 117-79 219-130 250-51-31-130-133-130-250V115l130-49Z"/>
++  <path fill="#f8d56b" fill-opacity=".30" d="M256 111 347 146v73c0 83-55 156-91 181-36-25-91-98-91-181v-73l91-35Z"/>
++  <path fill="#14324a" fill-opacity=".24" d="M257 176c-51 0-91 39-91 91s40 91 91 91c24 0 45-8 62-23l-36-36c-8 6-16 9-26 9-23 0-39-17-39-41s16-41 39-41c10 0 19 3 26 9l36-36c-17-15-38-23-62-23Z"/>
++  <path fill="#14324a" fill-opacity=".24" d="M333 174h54v184h-54z"/>
++</svg>
+diff --git a/components/security_interstitials/core/browser/resources/interstitial_large.js b/components/security_interstitials/core/browser/resources/interstitial_large.js
+index 5f4217446a..fe524bd2da 100644
+--- a/components/security_interstitials/core/browser/resources/interstitial_large.js
++++ b/components/security_interstitials/core/browser/resources/interstitial_large.js
+@@ -91,6 +91,10 @@ function setupEvents() {
+   const body = document.querySelector('#body');
+   if (ssl || blockedInterception) {
+     body.classList.add(badClock ? 'bad-clock' : 'ssl');
++    if (loadTimeData.valueExists('russian_root_disabled_error') &&
++        loadTimeData.getBoolean('russian_root_disabled_error')) {
++      body.classList.add('russian-root-disabled');
++    }
+     if (loadTimeData.valueExists('errorCode')) {
+       const errorCode = document.querySelector('#error-code');
+       errorCode.textContent = loadTimeData.getString('errorCode');
+diff --git a/components/security_interstitials/core/browser/resources/interstitial_ssl.css b/components/security_interstitials/core/browser/resources/interstitial_ssl.css
+index 9faae51879..234002f723 100644
+--- a/components/security_interstitials/core/browser/resources/interstitial_ssl.css
++++ b/components/security_interstitials/core/browser/resources/interstitial_ssl.css
+@@ -8,6 +8,18 @@
+       url(images/2x/triangle_red.png) 2x);
+ }
+ 
++.ssl.russian-root-disabled {
++  background-image: url(images/mincifry_shield_watermark.svg);
++  background-position: right 10vw top 14vh;
++  background-repeat: no-repeat;
++  background-size: min(42vw, 420px);
++}
++
++.ssl.russian-root-disabled .icon {
++  background-image: url(images/mincifry_shield_watermark.svg);
++  background-size: contain;
++}
++
+ .ssl-opt-in .checkbox::after {
+   border-color: #696969;
+ }
+diff --git a/components/security_interstitials/core/controller_client.h b/components/security_interstitials/core/controller_client.h
+index 65dee72ca8..25edb5936a 100644
+--- a/components/security_interstitials/core/controller_client.h
++++ b/components/security_interstitials/core/controller_client.h
+@@ -130,6 +130,7 @@ class ControllerClient {
+ 
+ #if BUILDFLAG(IS_ANDROID)
+   virtual void OpenAdvancedProtectionSettings() = 0;
++  virtual void OpenRussianCertificateSettings() = 0;
+ #endif  // BUILDFLAG(IS_ANDROID)
+ 
+   virtual PrefService* GetPrefService() = 0;
+diff --git a/components/security_interstitials/core/ssl_error_ui.cc b/components/security_interstitials/core/ssl_error_ui.cc
+index ffbec483dd..3de1a887c2 100644
+--- a/components/security_interstitials/core/ssl_error_ui.cc
++++ b/components/security_interstitials/core/ssl_error_ui.cc
+@@ -35,12 +35,14 @@ SSLErrorUI::SSLErrorUI(const GURL& request_url,
+                        int display_options,
+                        const base::Time& time_triggered,
+                        const GURL& support_url,
++                       bool russian_root_disabled_error,
+                        ControllerClient* controller)
+     : request_url_(request_url),
+       cert_error_(cert_error),
+       ssl_info_(ssl_info),
+       time_triggered_(time_triggered),
+       support_url_(support_url),
++      russian_root_disabled_error_(russian_root_disabled_error),
+       requested_strict_enforcement_(
+           IsMasked(display_options, STRICT_ENFORCEMENT)),
+       soft_override_enabled_(IsMasked(display_options, SOFT_OVERRIDE_ENABLED)),
+@@ -73,14 +75,25 @@ void SSLErrorUI::PopulateStringsForHTML(base::DictValue& load_time_data) {
+ 
+   // Shared values for both the overridable and non-overridable versions.
+   load_time_data.Set("bad_clock", false);
++  load_time_data.Set("russian_root_disabled_error",
++                     russian_root_disabled_error_);
+   load_time_data.Set("hide_primary_button", false);
+   load_time_data.Set("tabTitle", l10n_util::GetStringUTF16(IDS_SSL_V2_TITLE));
+-  load_time_data.Set("heading", l10n_util::GetStringUTF16(IDS_SSL_V2_HEADING));
++  load_time_data.Set(
++      "heading",
++      l10n_util::GetStringUTF16(
++          russian_root_disabled_error_
++              ? IDS_SSL_RUSSIAN_ROOT_DISABLED_HEADING
++              : IDS_SSL_V2_HEADING));
+   load_time_data.Set(
+       "primaryParagraph",
+-      l10n_util::GetStringFUTF16(
+-          IDS_SSL_V2_PRIMARY_PARAGRAPH,
+-          common_string_util::GetFormattedHostName(request_url_)));
++      russian_root_disabled_error_
++          ? l10n_util::GetStringFUTF16(
++                IDS_SSL_RUSSIAN_ROOT_DISABLED_PRIMARY_PARAGRAPH,
++                common_string_util::GetFormattedHostName(request_url_))
++          : l10n_util::GetStringFUTF16(
++                IDS_SSL_V2_PRIMARY_PARAGRAPH,
++                common_string_util::GetFormattedHostName(request_url_)));
+ 
+   load_time_data.Set("is_qwac_enabled",
+ #if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
+@@ -126,7 +139,10 @@ void SSLErrorUI::PopulateOverridableStrings(base::DictValue& load_time_data) {
+   load_time_data.Set("explanationParagraph", error_info.details());
+   load_time_data.Set(
+       "primaryButtonText",
+-      l10n_util::GetStringUTF16(IDS_SSL_OVERRIDABLE_SAFETY_BUTTON));
++      l10n_util::GetStringUTF16(
++          russian_root_disabled_error_
++              ? IDS_SSL_RUSSIAN_ROOT_DISABLED_MANAGE_BUTTON
++              : IDS_SSL_OVERRIDABLE_SAFETY_BUTTON));
+ 
+ // On iOS, offer to close the page instead of navigating to NTP when unable to
+ // go back. See crbug.com/1058476 for discussion.
+@@ -141,7 +157,11 @@ void SSLErrorUI::PopulateOverridableStrings(base::DictValue& load_time_data) {
+ 
+   load_time_data.Set(
+       "finalParagraph",
+-      l10n_util::GetStringFUTF16(IDS_SSL_OVERRIDABLE_PROCEED_PARAGRAPH, url));
++      russian_root_disabled_error_
++          ? l10n_util::GetStringUTF16(
++                IDS_SSL_RUSSIAN_ROOT_DISABLED_FINAL_PARAGRAPH)
++          : l10n_util::GetStringFUTF16(IDS_SSL_OVERRIDABLE_PROCEED_PARAGRAPH,
++                                       url));
+ }
+ 
+ void SSLErrorUI::PopulateNonOverridableStrings(
+@@ -156,9 +176,16 @@ void SSLErrorUI::PopulateNonOverridableStrings(
+   load_time_data.Set("hide_primary_button", false);
+   load_time_data.Set(
+       "explanationParagraph",
+-      l10n_util::GetStringFUTF16(IDS_SSL_NONOVERRIDABLE_MORE, url));
+-  load_time_data.Set("primaryButtonText",
+-                     l10n_util::GetStringUTF16(IDS_SSL_RELOAD));
++      russian_root_disabled_error_
++          ? l10n_util::GetStringFUTF16(
++                IDS_SSL_RUSSIAN_ROOT_DISABLED_DETAILS, url)
++          : l10n_util::GetStringFUTF16(IDS_SSL_NONOVERRIDABLE_MORE, url));
++  load_time_data.Set(
++      "primaryButtonText",
++      l10n_util::GetStringUTF16(
++          russian_root_disabled_error_
++              ? IDS_SSL_RUSSIAN_ROOT_DISABLED_MANAGE_BUTTON
++              : IDS_SSL_RELOAD));
+ 
+   // Customize the help link depending on the specific error type.
+   // Only mark as HSTS if none of the more specific error types apply,
+@@ -181,7 +208,10 @@ void SSLErrorUI::PopulateNonOverridableStrings(
+       }
+   }
+   load_time_data.Set("finalParagraph",
+-                     l10n_util::GetStringFUTF16(help_string, url));
++                     russian_root_disabled_error_
++                         ? l10n_util::GetStringUTF16(
++                               IDS_SSL_RUSSIAN_ROOT_DISABLED_FINAL_PARAGRAPH)
++                         : l10n_util::GetStringFUTF16(help_string, url));
+ }
+ 
+ void SSLErrorUI::HandleCommand(SecurityInterstitialCommand command) {
+@@ -190,7 +220,11 @@ void SSLErrorUI::HandleCommand(SecurityInterstitialCommand command) {
+       controller_->metrics_helper()->RecordUserDecision(
+           MetricsHelper::DONT_PROCEED);
+       user_made_decision_ = true;
+-      controller_->GoBack();
++      if (russian_root_disabled_error_) {
++        controller_->OpenRussianCertificateSettings();
++      } else {
++        controller_->GoBack();
++      }
+       break;
+     }
+     case CMD_PROCEED: {
+@@ -238,7 +272,11 @@ void SSLErrorUI::HandleCommand(SecurityInterstitialCommand command) {
+     case CMD_RELOAD: {
+       controller_->metrics_helper()->RecordUserInteraction(
+           security_interstitials::MetricsHelper::RELOAD);
+-      controller_->Reload();
++      if (russian_root_disabled_error_) {
++        controller_->OpenRussianCertificateSettings();
++      } else {
++        controller_->Reload();
++      }
+       break;
+     }
+     case CMD_OPEN_REPORTING_PRIVACY:
+diff --git a/components/security_interstitials/core/ssl_error_ui.h b/components/security_interstitials/core/ssl_error_ui.h
+index 8aa2e06334..bea8b91786 100644
+--- a/components/security_interstitials/core/ssl_error_ui.h
++++ b/components/security_interstitials/core/ssl_error_ui.h
+@@ -28,6 +28,7 @@ class SSLErrorUI {
+              int display_options,  // Bitmask of SSLErrorOptionsMask values.
+              const base::Time& time_triggered,
+              const GURL& support_url,
++             bool russian_root_disabled_error,
+              ControllerClient* controller);
+ 
+   SSLErrorUI(const SSLErrorUI&) = delete;
+@@ -53,6 +54,7 @@ class SSLErrorUI {
+   const net::SSLInfo ssl_info_;
+   const base::Time time_triggered_;
+   const GURL support_url_;
++  const bool russian_root_disabled_error_;
+ 
+   // Set by the |display_options|.
+   const bool requested_strict_enforcement_;
+diff --git a/components/security_interstitials_strings.grdp b/components/security_interstitials_strings.grdp
+index f1029649dc..d2d062b201 100644
+--- a/components/security_interstitials_strings.grdp
++++ b/components/security_interstitials_strings.grdp
+@@ -185,6 +185,12 @@
+   <message name="IDS_SSL_V2_HEADING" desc="The large heading at the top of the SSL interstitial.">
+     Your connection is not private
+   </message>
++  <message name="IDS_SSL_RUSSIAN_ROOT_DISABLED_HEADING" desc="Large heading for an SSL interstitial shown when the page chains to the Russian Ministry of Digital Development root certificate but that application-scoped root is disabled.">
++    Сертификат Минцифры отключен
++  </message>
++  <message name="IDS_SSL_RUSSIAN_ROOT_DISABLED_PRIMARY_PARAGRAPH" desc="Primary paragraph for an SSL interstitial shown when the page chains to the Russian Ministry of Digital Development root certificate but that application-scoped root is disabled.">
++    <ph name="SITE">$1<ex>example.com</ex></ph> использует сертификат, который проверяется через корневой сертификат Минцифры. Сейчас этот сертификат отключен в URSUS browser.
++  </message>
+   <message name="IDS_SSL_V2_PRIMARY_PARAGRAPH" desc="The primary explanatory paragraph for the SSL interstitial.">
+     Attackers might be trying to steal your information from <ph name="BEGIN_BOLD">&lt;strong&gt;</ph><ph name="SITE">$1<ex>google.com</ex></ph><ph name="END_BOLD">&lt;/strong&gt;</ph> (for example, passwords, messages, or credit cards). <ph name="BEGIN_LEARN_MORE_LINK">&lt;a href="#" id="learn-more-link"&gt;</ph>Learn more about this warning<ph name="END_LEARN_MORE_LINK">&lt;/a&gt;</ph>
+   </message>
+@@ -204,6 +210,9 @@
+   <message name="IDS_SSL_RELOAD" desc="The text for the button that reloads the page.">
+     Reload
+   </message>
++  <message name="IDS_SSL_RUSSIAN_ROOT_DISABLED_MANAGE_BUTTON" desc="Primary button on the SSL interstitial when the Russian root certificate is disabled. Opens the Russian certificate settings page.">
++    Управление сертификатом
++  </message>
+   <message name="IDS_SSL_NONOVERRIDABLE_PINNED" desc="A sentence to explain why the user can't proceed, plus a link to a help page about certificate pinning.">
+     You cannot visit <ph name="SITE">$1<ex>google.com</ex></ph> right now because the website uses certificate pinning. Network errors and attacks are usually temporary, so this page will probably work later.
+   </message>
+@@ -229,6 +238,12 @@
+       You cannot visit <ph name="SITE">$1<ex>google.com</ex></ph> right now because the website sent scrambled credentials that Chromium cannot process. Network errors and attacks are usually temporary, so this page will probably work later.
+     </message>
+   </if>
++  <message name="IDS_SSL_RUSSIAN_ROOT_DISABLED_DETAILS" desc="Details paragraph for an SSL interstitial shown when the page chains to the Russian Ministry of Digital Development root certificate but that application-scoped root is disabled.">
++    URSUS browser остановил подключение к <ph name="SITE">$1<ex>example.com</ex></ph>, потому что использование корневого сертификата Минцифры отключено в настройках. Чтобы открыть такие сайты, включите этот сертификат в управлении сертификатом Минцифры.
++  </message>
++  <message name="IDS_SSL_RUSSIAN_ROOT_DISABLED_FINAL_PARAGRAPH" desc="Final paragraph for an SSL interstitial shown when the page chains to the Russian Ministry of Digital Development root certificate but that application-scoped root is disabled.">
++    После включения сертификата обновите страницу.
++  </message>
+ 
+   <!-- Safe Browsing interstitials V3 (shared phishing & malware) -->
+   <message name="IDS_SAFEBROWSING_V3_TITLE" desc="The tab title for the Safe Browsing interstitials.">
