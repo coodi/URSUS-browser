@@ -13,6 +13,9 @@ The indicator popup links to certificate management, where the bundled root can
 be enabled or disabled. If the root is disabled and a site needs it, URSUS
 browser shows a Ministry-branded certificate error page with a direct
 management button instead of the generic certificate error.
+The Android page menu also includes manual cosmetic element blocking: users can
+select a visible page element and URSUS browser will hide matching elements on
+the same origin on future loads.
 
 URSUS browser is intended to be built from an upstream Chromium source checkout
 as a standalone Android application. The browser must keep Chromium and
@@ -32,6 +35,9 @@ only inside this application.
   a host allowlist.
 - Russian-root-disabled errors must offer a direct path back to the scoped
   certificate management page.
+- Manual element blocking is cosmetic and origin-scoped. It hides selected DOM
+  elements with CSS; it does not rewrite network requests or disable TLS
+  validation.
 
 ## Current Checkout Status
 

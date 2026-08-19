@@ -1,0 +1,385 @@
+diff --git a/chrome/android/chrome_java_sources.gni b/chrome/android/chrome_java_sources.gni
+index af74f3a508..1d8a921ee4 100644
+--- a/chrome/android/chrome_java_sources.gni
++++ b/chrome/android/chrome_java_sources.gni
+@@ -67,6 +67,7 @@ chrome_java_sources = [
+   "java/src/org/chromium/chrome/browser/accessibility/settings/AccessibilitySettingsBridge.java",
+   "java/src/org/chromium/chrome/browser/accessibility/settings/CaretBrowsingDialog.java",
+   "java/src/org/chromium/chrome/browser/accessibility/settings/ChromeAccessibilitySettingsDelegate.java",
++  "java/src/org/chromium/chrome/browser/adblock/ManualAdBlocker.java",
+   "java/src/org/chromium/chrome/browser/actor/ActorBackgroundActuationManager.java",
+   "java/src/org/chromium/chrome/browser/actor/ActorForegroundServiceControllerImpl.java",
+   "java/src/org/chromium/chrome/browser/actor/ActorForegroundServiceImpl.java",
+diff --git a/chrome/android/java/res/values/ids.xml b/chrome/android/java/res/values/ids.xml
+index 2e59411005..70d5427f41 100644
+--- a/chrome/android/java/res/values/ids.xml
++++ b/chrome/android/java/res/values/ids.xml
+@@ -186,6 +186,7 @@ found in the LICENSE file.
+     <item type="id" name="bookmark_this_page_menu_id" />
+     <item type="id" name="bookmarks_header_menu_id" />
+     <item type="id" name="bookmarks_parent_menu_id" />
++    <item type="id" name="block_ad_element_menu_id" />
+     <item type="id" name="close_all_incognito_tabs_menu_id" />
+     <item type="id" name="close_all_tabs_menu_id" />
+     <item type="id" name="close_other_tabs_menu_id" />
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/adblock/ManualAdBlocker.java b/chrome/android/java/src/org/chromium/chrome/browser/adblock/ManualAdBlocker.java
+new file mode 100644
+index 0000000000..1075008dae
+--- /dev/null
++++ b/chrome/android/java/src/org/chromium/chrome/browser/adblock/ManualAdBlocker.java
+@@ -0,0 +1,231 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++package org.chromium.chrome.browser.adblock;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++import android.os.Handler;
++import android.os.Looper;
++import android.widget.Toast;
++
++import org.json.JSONArray;
++import org.json.JSONException;
++
++import org.chromium.base.ContextUtils;
++import org.chromium.build.annotations.NullMarked;
++import org.chromium.build.annotations.Nullable;
++import org.chromium.chrome.R;
++import org.chromium.chrome.browser.tab.Tab;
++import org.chromium.content_public.browser.JavaScriptCallback;
++import org.chromium.content_public.browser.WebContents;
++import org.chromium.url.GURL;
++
++/** Manual cosmetic element blocking for URSUS browser. */
++@NullMarked
++public final class ManualAdBlocker {
++    private static final String PREFS_NAME = "ursus_manual_ad_blocker";
++    private static final String LAST_SELECTOR_KEY = "__ursusManualBlockerLastSelector";
++    private static final int MAX_RULES_PER_ORIGIN = 200;
++    private static final int POLL_ATTEMPTS = 40;
++    private static final long POLL_DELAY_MS = 250;
++
++    private ManualAdBlocker() {}
++
++    public static boolean canBlockElements(@Nullable Tab tab) {
++        return tab != null && tab.getWebContents() != null && !tab.isNativePage();
++    }
++
++    public static void startElementBlocking(Context context, @Nullable Tab tab) {
++        if (!canBlockElements(tab)) {
++            Toast.makeText(context, R.string.ursus_element_blocker_unavailable, Toast.LENGTH_SHORT)
++                    .show();
++            return;
++        }
++
++        assert tab != null;
++        if (!isSupportedUrl(tab.getUrl())) {
++            Toast.makeText(context, R.string.ursus_element_blocker_unavailable, Toast.LENGTH_SHORT)
++                    .show();
++            return;
++        }
++        WebContents webContents = tab.getWebContents();
++        assert webContents != null;
++        String origin = getOrigin(tab.getUrl());
++        if (origin.isEmpty()) return;
++
++        webContents.evaluateJavaScript(getStartPickerScript(), null);
++        Toast.makeText(context, R.string.ursus_element_blocker_pick_hint, Toast.LENGTH_LONG).show();
++        pollForSelection(context.getApplicationContext(), tab, origin, POLL_ATTEMPTS);
++    }
++
++    public static void applyRules(@Nullable Tab tab) {
++        if (!canBlockElements(tab)) return;
++
++        assert tab != null;
++        if (!isSupportedUrl(tab.getUrl())) return;
++        WebContents webContents = tab.getWebContents();
++        assert webContents != null;
++        String origin = getOrigin(tab.getUrl());
++        if (origin.isEmpty()) return;
++
++        JSONArray selectors = getRulesForOrigin(origin);
++        if (selectors.length() == 0) return;
++
++        webContents.evaluateJavaScript(getApplyRulesScript(selectors), null);
++    }
++
++    private static void pollForSelection(
++            Context context, Tab tab, String origin, int attemptsRemaining) {
++        if (attemptsRemaining <= 0 || tab.getWebContents() == null) return;
++
++        tab.getWebContents()
++                .evaluateJavaScript(
++                        "(function(){var v=sessionStorage.getItem('"
++                                + LAST_SELECTOR_KEY
++                                + "');if(v!==null){sessionStorage.removeItem('"
++                                + LAST_SELECTOR_KEY
++                                + "');return v;}return '';})()",
++                        new JavaScriptCallback() {
++                            @Override
++                            public void handleJavaScriptResult(String jsonResult) {
++                                String selector = readJsonString(jsonResult);
++                                if (!selector.isEmpty()) {
++                                    if ("__cancelled__".equals(selector)) {
++                                        Toast.makeText(
++                                                        context,
++                                                        R.string.ursus_element_blocker_cancelled,
++                                                        Toast.LENGTH_SHORT)
++                                                .show();
++                                    } else {
++                                        saveRule(origin, selector);
++                                        applyRules(tab);
++                                        Toast.makeText(
++                                                        context,
++                                                        R.string.ursus_element_blocker_saved,
++                                                        Toast.LENGTH_SHORT)
++                                                .show();
++                                    }
++                                    return;
++                                }
++                                new Handler(Looper.getMainLooper())
++                                        .postDelayed(
++                                                () ->
++                                                        pollForSelection(
++                                                                context,
++                                                                tab,
++                                                                origin,
++                                                                attemptsRemaining - 1),
++                                                POLL_DELAY_MS);
++                            }
++                        });
++    }
++
++    private static JSONArray getRulesForOrigin(String origin) {
++        String serialized = getPrefs().getString(origin, "[]");
++        try {
++            return new JSONArray(serialized);
++        } catch (JSONException e) {
++            return new JSONArray();
++        }
++    }
++
++    private static void saveRule(String origin, String selector) {
++        JSONArray selectors = getRulesForOrigin(origin);
++        for (int i = 0; i < selectors.length(); i++) {
++            if (selector.equals(selectors.optString(i))) return;
++        }
++        if (selectors.length() >= MAX_RULES_PER_ORIGIN) selectors.remove(0);
++        selectors.put(selector);
++        getPrefs().edit().putString(origin, selectors.toString()).apply();
++    }
++
++    private static SharedPreferences getPrefs() {
++        return ContextUtils.getApplicationContext().getSharedPreferences(PREFS_NAME, 0);
++    }
++
++    private static String getOrigin(GURL url) {
++        GURL origin = url.getOrigin();
++        return origin == null ? "" : origin.getSpec();
++    }
++
++    private static boolean isSupportedUrl(GURL url) {
++        if (url == null || !url.isValid()) return false;
++        String scheme = url.getScheme();
++        return "http".equals(scheme) || "https".equals(scheme);
++    }
++
++    private static String readJsonString(String jsonResult) {
++        if (jsonResult == null || jsonResult.equals("null")) return "";
++        try {
++            return new JSONArray("[" + jsonResult + "]").optString(0, "");
++        } catch (JSONException e) {
++            return "";
++        }
++    }
++
++    private static String getApplyRulesScript(JSONArray selectors) {
++        return "(function(selectors){"
++                + "const id='ursus-manual-adblock-style';"
++                + "let style=document.getElementById(id);"
++                + "if(!style){style=document.createElement('style');style.id=id;"
++                + "(document.head||document.documentElement).appendChild(style);}"
++                + "style.textContent=selectors.map(s=>s+'{display:none!important;}').join('\\n');"
++                + "function hide(){selectors.forEach(s=>{try{document.querySelectorAll(s).forEach("
++                + "e=>e.style.setProperty('display','none','important'));}catch(e){}});}"
++                + "hide();"
++                + "if(window.__ursusManualAdBlockObserver)window.__ursusManualAdBlockObserver.disconnect();"
++                + "window.__ursusManualAdBlockObserver=new MutationObserver(hide);"
++                + "window.__ursusManualAdBlockObserver.observe(document.documentElement,"
++                + "{childList:true,subtree:true});"
++                + "})("
++                + selectors
++                + ");";
++    }
++
++    private static String getStartPickerScript() {
++        return "(function(){"
++                + "if(window.__ursusElementPickerCleanup)window.__ursusElementPickerCleanup();"
++                + "const key='"
++                + LAST_SELECTOR_KEY
++                + "';"
++                + "const esc=s=>(window.CSS&&CSS.escape)?CSS.escape(s):String(s).replace(/[^a-zA-Z0-9_-]/g,'\\\\$&');"
++                + "const style=document.createElement('style');style.id='ursus-element-picker-style';"
++                + "style.textContent='.__ursus-picker-outline{outline:3px solid #4cc38a!important;outline-offset:2px!important;}#ursus-picker-toast{position:fixed;left:16px;right:16px;bottom:24px;z-index:2147483647;background:#17201d;color:#fff;border:1px solid #4cc38a;border-radius:10px;padding:12px 14px;font:14px sans-serif;text-align:center;}#ursus-picker-cancel{margin-left:12px;color:#8ab4ff;text-decoration:underline;}';"
++                + "document.documentElement.appendChild(style);"
++                + "const toast=document.createElement('div');toast.id='ursus-picker-toast';"
++                + "toast.innerHTML='Коснитесь элемента, который нужно скрыть <span id=\"ursus-picker-cancel\">Отмена</span>';"
++                + "document.documentElement.appendChild(toast);"
++                + "let current=null;"
++                + "function cleanup(){if(current)current.classList.remove('__ursus-picker-outline');"
++                + "document.removeEventListener('touchstart',onTouch,true);"
++                + "document.removeEventListener('click',onClick,true);"
++                + "toast.remove();style.remove();window.__ursusElementPickerCleanup=null;}"
++                + "function selector(el){if(!el||el===document.documentElement||el===document.body)return '';"
++                + "if(el.id)return '#'+esc(el.id);"
++                + "const path=[];while(el&&el.nodeType===1&&el!==document.body){"
++                + "let part=el.localName.toLowerCase();"
++                + "const classes=[...el.classList].filter(c=>!c.startsWith('__ursus-')&&!/[0-9]{4,}/.test(c)).slice(0,2);"
++                + "if(classes.length)part+='.'+classes.map(esc).join('.');"
++                + "let n=1,sib=el;while((sib=sib.previousElementSibling)!=null){if(sib.localName===el.localName)n++;}"
++                + "part+=':nth-of-type('+n+')';path.unshift(part);"
++                + "const joined=path.join('>');try{if(document.querySelectorAll(joined).length===1)return joined;}catch(e){}"
++                + "el=el.parentElement;}return path.join('>');}"
++                + "function pick(x,y){let el=document.elementFromPoint(x,y);"
++                + "if(!el||el.id==='ursus-picker-toast'||el.id==='ursus-picker-cancel')return;"
++                + "if(current)current.classList.remove('__ursus-picker-outline');current=el;"
++                + "current.classList.add('__ursus-picker-outline');}"
++                + "function finish(el){const s=selector(el);cleanup();if(s){try{document.querySelectorAll(s).forEach(e=>e.style.setProperty('display','none','important'));}catch(e){}sessionStorage.setItem(key,s);}}"
++                + "function cancel(){cleanup();sessionStorage.setItem(key,'__cancelled__');}"
++                + "function onTouch(e){if(!e.changedTouches.length)return;const t=e.changedTouches[0];pick(t.clientX,t.clientY);}"
++                + "function onClick(e){e.preventDefault();e.stopPropagation();"
++                + "if(e.target&&e.target.id==='ursus-picker-cancel'){cancel();return;}"
++                + "finish(current||e.target);}"
++                + "document.addEventListener('touchstart',onTouch,true);"
++                + "document.addEventListener('click',onClick,true);"
++                + "document.getElementById('ursus-picker-cancel').addEventListener('click',cancel,true);"
++                + "window.__ursusElementPickerCleanup=cleanup;"
++                + "})()";
++    }
++}
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/app/ChromeActivity.java b/chrome/android/java/src/org/chromium/chrome/browser/app/ChromeActivity.java
+index 22583e15c8..569eb0bd97 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/app/ChromeActivity.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/app/ChromeActivity.java
+@@ -74,6 +74,7 @@ import org.chromium.build.annotations.Nullable;
+ import org.chromium.chrome.R;
+ import org.chromium.chrome.browser.ActivityTabProvider;
+ import org.chromium.chrome.browser.ActivityUtils;
++import org.chromium.chrome.browser.adblock.ManualAdBlocker;
+ import org.chromium.chrome.browser.ChromeActivitySessionTracker;
+ import org.chromium.chrome.browser.ChromeApplicationImpl;
+ import org.chromium.chrome.browser.ChromeKeyboardVisibilityDelegate;
+@@ -980,6 +981,7 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
+                     public void onPageLoadFinished(Tab tab, GURL url) {
+                         postDeferredStartupIfNeeded();
+                         OfflinePageUtils.showOfflineSnackbarIfNecessary(tab);
++                        ManualAdBlocker.applyRules(tab);
+                     }
+ 
+                     @Override
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java b/chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java
+index 630653e4a3..a708e1bee7 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java
+@@ -30,6 +30,7 @@ import org.chromium.build.annotations.Nullable;
+ import org.chromium.chrome.R;
+ import org.chromium.chrome.browser.ActivityTabProvider;
+ import org.chromium.chrome.browser.RecentlyClosedEntriesManager;
++import org.chromium.chrome.browser.adblock.ManualAdBlocker;
+ import org.chromium.chrome.browser.app.appmenu.AppMenuItemUtils;
+ import org.chromium.chrome.browser.app.appmenu.AppMenuPropertiesDelegateImpl;
+ import org.chromium.chrome.browser.bookmarks.BookmarkImageFetcher;
+@@ -488,6 +489,11 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
+         // Find in page
+         if (shouldShowFindInPageItem(currentTab)) modelList.add(buildFindInPageItem(currentTab));
+ 
++        // Block element
++        if (ManualAdBlocker.canBlockElements(currentTab)) {
++            modelList.add(buildBlockAdElementItem(shouldShowIconBeforeItem));
++        }
++
+         // Lens Overlay
+         if (shouldShowLensOverlayItem(currentTab)) modelList.add(buildLensOverlayItem(currentTab));
+ 
+@@ -697,6 +703,11 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
+         // Find in page
+         if (shouldShowFindInPageItem(currentTab)) modelList.add(buildFindInPageItem(currentTab));
+ 
++        // Block element
++        if (ManualAdBlocker.canBlockElements(currentTab)) {
++            modelList.add(buildBlockAdElementItem(shouldShowIconBeforeItem));
++        }
++
+         // Lens Overlay
+         if (shouldShowLensOverlayItem(currentTab)) modelList.add(buildLensOverlayItem(currentTab));
+ 
+@@ -1592,6 +1603,18 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
+                         isMenuIconAtStart()));
+     }
+ 
++    private ListItem buildBlockAdElementItem(boolean showIcon) {
++        return new ListItem(
++                AppMenuHandler.AppMenuItemType.STANDARD,
++                AppMenuItemUtils.buildModelForStandardMenuItem(
++                        mContext,
++                        getAppMenuItemTheme(),
++                        R.id.block_ad_element_menu_id,
++                        R.string.menu_block_ad_element,
++                        showIcon ? R.drawable.material_ic_delete_24dp : Resources.ID_NULL,
++                        isMenuIconAtStart()));
++    }
++
+     private boolean shouldShowLensOverlayItem(@Nullable Tab currentTab) {
+         return LensOverlayTabHelper.shouldShowLensOverlay(currentTab);
+     }
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/ui/RootUiCoordinator.java b/chrome/android/java/src/org/chromium/chrome/browser/ui/RootUiCoordinator.java
+index b383dd73f2..6a3c68f49f 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/ui/RootUiCoordinator.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/ui/RootUiCoordinator.java
+@@ -59,6 +59,7 @@ import org.chromium.chrome.browser.ActivityUtils;
+ import org.chromium.chrome.browser.ChromeActionModeHandler;
+ import org.chromium.chrome.browser.IntentHandler;
+ import org.chromium.chrome.browser.WebSearchDelegate;
++import org.chromium.chrome.browser.adblock.ManualAdBlocker;
+ import org.chromium.chrome.browser.app.tabmodel.ArchivedTabModelOrchestrator;
+ import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
+ import org.chromium.chrome.browser.autofill.anchored_dialog.AnchoredDialogCoordinator;
+@@ -1812,6 +1813,10 @@ public class RootUiCoordinator
+         if (id == R.id.show_menu && mAppMenuCoordinator != null) {
+             mAppMenuCoordinator.showAppMenuForKeyboardEvent();
+             return true;
++        } else if (id == R.id.block_ad_element_menu_id) {
++            ManualAdBlocker.startElementBlocking(mActivity, mActivityTabProvider.get());
++            RecordUserAction.record("MobileMenuBlockAdElement");
++            return true;
+         } else if (id == R.id.find_in_page_id) {
+             Tab tab = mActivityTabProvider.get();
+             // PDF pages require Android pdf viewer API to "find in page".
+diff --git a/chrome/browser/ui/android/strings/android_chrome_strings.grd b/chrome/browser/ui/android/strings/android_chrome_strings.grd
+index e8b3cd44ec..5961853f42 100644
+--- a/chrome/browser/ui/android/strings/android_chrome_strings.grd
++++ b/chrome/browser/ui/android/strings/android_chrome_strings.grd
+@@ -4342,6 +4342,21 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the browser
+       <message name="IDS_MENU_FIND_IN_PAGE" desc="Menu item allowing users to find text within the current page. [CHAR_LIMIT=27]">
+         Find in page
+       </message>
++      <message name="IDS_MENU_BLOCK_AD_ELEMENT" desc="Menu item allowing users to manually hide an element on the current page. [CHAR_LIMIT=32]">
++        Заблокировать элемент
++      </message>
++      <message name="IDS_URSUS_ELEMENT_BLOCKER_PICK_HINT" desc="Toast shown when manual element blocking mode starts.">
++        Коснитесь элемента, который нужно скрыть
++      </message>
++      <message name="IDS_URSUS_ELEMENT_BLOCKER_SAVED" desc="Toast shown after a manual element blocking rule is saved.">
++        Элемент скрыт
++      </message>
++      <message name="IDS_URSUS_ELEMENT_BLOCKER_CANCELLED" desc="Toast shown when manual element blocking mode is cancelled.">
++        Блокировка отменена
++      </message>
++      <message name="IDS_URSUS_ELEMENT_BLOCKER_UNAVAILABLE" desc="Toast shown when manual element blocking is not available on the current page.">
++        На этой странице нельзя выбрать элемент
++      </message>
+       <message name="IDS_MENU_PAINT_PREVIEW_SHOW" desc="Menu item allowing users to capture and show a paint preview of a page. [CHAR_LIMIT=27]" translateable="false">
+         Show Paint Preview
+       </message>

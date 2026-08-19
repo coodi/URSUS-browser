@@ -12,6 +12,7 @@ android_branding_resources.patch
 russian_ca_chromium.patch
 russian_ca_indicator_android.patch
 russian_ca_management_android.patch
+manual_ad_blocker_android.patch
 ```
 
 `android_app_name.patch` changes the Android Chromium application label and
@@ -57,3 +58,9 @@ button. When the root is disabled and the failed certificate chain contains the
 bundled Russian root, the SSL interstitial is changed to a Ministry-branded
 error page with a shield watermark and a primary `Управление сертификатом`
 button that opens the management page.
+
+`manual_ad_blocker_android.patch` adds a Safari-style manual cosmetic blocker
+to the Android page menu. The `Заблокировать элемент` action starts an in-page
+picker, stores the generated CSS selector per origin, and reapplies stored
+selectors on future page loads. This hides page elements only; it does not
+block requests or change certificate validation.
