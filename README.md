@@ -101,6 +101,8 @@ Mitigation: Chromium certificate verification remains active. The project must n
 ## Build
 
 Install Chromium Android build prerequisites and depot_tools, then check out Chromium separately. This repository intentionally does not vendor Chromium.
+AI coding agents should follow [AGENTS.md](AGENTS.md) instead of this human
+overview.
 
 Example:
 

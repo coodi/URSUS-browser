@@ -6,6 +6,7 @@ chromium_src="${CHROMIUM_SRC:-}"
 out_dir="${OUT_DIR:-out/URSUS_Browser_Android_arm64}"
 target="${TARGET:-chrome_public_apk}"
 device_test="${DEVICE_TEST:-0}"
+local_jobs="${LOCAL_JOBS:-4}"
 
 if [[ -z "$chromium_src" || ! -d "$chromium_src/.git" ]]; then
   echo "ERROR: set CHROMIUM_SRC to a Chromium src git checkout" >&2
@@ -32,7 +33,7 @@ cp "$repo_root/config/android-arm64-args.gn" "$chromium_src/$out_dir/args.gn"
 
 cd "$chromium_src"
 gn gen "$out_dir"
-autoninja -C "$out_dir" "$target"
+autoninja -local_jobs="$local_jobs" -C "$out_dir" "$target"
 
 echo
 echo "APK candidates:"
