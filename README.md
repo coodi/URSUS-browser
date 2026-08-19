@@ -3,9 +3,10 @@
 Open-source Chromium-based Android browser with application-scoped support for Russian Trusted Root CA.
 
 The Android application label is `URSUS browser`; Android launcher icons are
-replaced with the URSUS browser artwork. Visible Android branding strings are
-renamed to `URSUS browser`; the About page discloses that the browser is built
-on Chromium technology. The default Android UI theme is dark and uses
+replaced with the URSUS browser artwork, and the Android package id is
+`com.ursus.browser`. Visible Android branding strings are renamed to
+`URSUS browser`; the About page discloses that the browser is built on Chromium
+technology. The default Android UI theme is dark and uses
 logo-inspired URSUS green, blue, and orange as the primary accent palette. When
 the verified certificate chain uses the bundled Russian trusted root, the
 Android address bar shows a Ministry of Digital Development shield indicator.

@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 input=""
 device_serial="${ADB_SERIAL:-}"
-package_name="${PACKAGE_NAME:-org.chromium.chrome}"
+package_name="${PACKAGE_NAME:-com.ursus.browser}"
 install_to_device=0
 cert_dir="$repo_root/certs"
 out_pem="$cert_dir/rootca_ssl_rsa2022.cer"

@@ -10,6 +10,7 @@ human setup guide.
   absolute paths.
 - Chromium output directory: prefer `OUT_DIR=out/URSUS_Browser_Android_arm64`.
 - Android target: prefer `TARGET=chrome_public_apk`.
+- Android package id: `com.ursus.browser`.
 
 ## Rules
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 apk="${1:-}"
-package="${ANDROID_PACKAGE:-org.chromium.chrome}"
+package="${ANDROID_PACKAGE:-com.ursus.browser}"
 activity="${ANDROID_ACTIVITY:-}"
 
 if [[ -z "$apk" ]]; then
