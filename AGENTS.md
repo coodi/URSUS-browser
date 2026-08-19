@@ -20,7 +20,7 @@ human setup guide.
   paths, or private tokens.
 - Do not use `--ignore-certificate-errors` or any global TLS bypass.
 - Keep the Russian trusted root scoped to the application.
-- Limit local build parallelism. Use `LOCAL_JOBS=4` unless the user explicitly
+- Limit local build parallelism. Use `LOCAL_JOBS=8` unless the user explicitly
   requests another value.
 - Do not run destructive git commands such as `git reset --hard` unless the user
   explicitly asks for that operation.
@@ -33,7 +33,7 @@ Start from this repository root:
 export CHROMIUM_SRC=/path/to/chromium/src
 export OUT_DIR=out/URSUS_Browser_Android_arm64
 export TARGET=chrome_public_apk
-export LOCAL_JOBS=4
+export LOCAL_JOBS=8
 ```
 
 Validate the Chromium checkout:
