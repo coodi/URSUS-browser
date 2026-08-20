@@ -15,8 +15,9 @@ be enabled or disabled. If the root is disabled and a site needs it, URSUS
 browser shows a Ministry-branded certificate error page with a direct
 management button instead of the generic certificate error.
 The Android page menu also includes manual cosmetic element blocking: users can
-select a visible page element and URSUS browser will hide matching elements on
-the same origin on future loads.
+select a visible page element, confirm the hide action, and URSUS browser will
+hide matching elements on the same origin on future loads. The same menu offers
+`Показать все` for the current origin when manual rules exist.
 
 URSUS browser is intended to be built from an upstream Chromium source checkout
 as a standalone Android application. The browser must keep Chromium and

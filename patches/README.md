@@ -61,6 +61,8 @@ button that opens the management page.
 
 `manual_ad_blocker_android.patch` adds a Safari-style manual cosmetic blocker
 to the Android page menu. The `Заблокировать элемент` action starts an in-page
-picker, stores the generated CSS selector per origin, and reapplies stored
-selectors on future page loads. This hides page elements only; it does not
-block requests or change certificate validation.
+picker, asks for confirmation before storing the generated CSS selector per
+origin, and reapplies stored selectors on future page loads. When rules exist
+for the current origin, `Показать все` clears them and restores hidden elements.
+This hides page elements only; it does not block requests or change certificate
+validation.

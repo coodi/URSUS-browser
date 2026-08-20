@@ -24,24 +24,24 @@ index af74f3a508..1d8a921ee4 100644
    "java/src/org/chromium/chrome/browser/actor/ActorForegroundServiceControllerImpl.java",
    "java/src/org/chromium/chrome/browser/actor/ActorForegroundServiceImpl.java",
 diff --git a/chrome/android/java/res/values/ids.xml b/chrome/android/java/res/values/ids.xml
-index 2e59411005..70d5427f41 100644
+index 2e59411005..fb54d2237f 100644
 --- a/chrome/android/java/res/values/ids.xml
 +++ b/chrome/android/java/res/values/ids.xml
-@@ -186,6 +186,7 @@ found in the LICENSE file.
+@@ -186,6 +186,8 @@ found in the LICENSE file.
      <item type="id" name="bookmark_this_page_menu_id" />
      <item type="id" name="bookmarks_header_menu_id" />
      <item type="id" name="bookmarks_parent_menu_id" />
 +    <item type="id" name="block_ad_element_menu_id" />
++    <item type="id" name="show_blocked_elements_menu_id" />
      <item type="id" name="close_all_incognito_tabs_menu_id" />
      <item type="id" name="close_all_tabs_menu_id" />
      <item type="id" name="close_other_tabs_menu_id" />
-
 diff --git a/chrome/android/java/src/org/chromium/chrome/browser/adblock/ManualAdBlocker.java b/chrome/android/java/src/org/chromium/chrome/browser/adblock/ManualAdBlocker.java
 new file mode 100644
-index 0000000000..508880c3a0
+index 0000000000..ad980c6695
 --- /dev/null
 +++ b/chrome/android/java/src/org/chromium/chrome/browser/adblock/ManualAdBlocker.java
-@@ -0,0 +1,272 @@
+@@ -0,0 +1,346 @@
 +// Copyright 2026 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -58,6 +58,7 @@ index 0000000000..508880c3a0
 +import org.jni_zero.NativeMethods;
 +import org.json.JSONArray;
 +import org.json.JSONException;
++import org.json.JSONObject;
 +
 +import org.chromium.base.ContextUtils;
 +import org.chromium.build.annotations.NullMarked;
@@ -74,7 +75,7 @@ index 0000000000..508880c3a0
 +    private static final String PREFS_NAME = "ursus_manual_ad_blocker";
 +    private static final String LAST_SELECTOR_KEY = "__ursusManualBlockerLastSelector";
 +    private static final int MAX_RULES_PER_ORIGIN = 200;
-+    private static final int POLL_ATTEMPTS = 40;
++    private static final int POLL_ATTEMPTS = 480;
 +    private static final long POLL_DELAY_MS = 250;
 +
 +    private ManualAdBlocker() {}
@@ -88,6 +89,14 @@ index 0000000000..508880c3a0
 +                && !tab.isNativePage()
 +                && !tab.isShowingErrorPage()
 +                && isSupportedUrl(tab.getUrl());
++    }
++
++    public static boolean hasRules(@Nullable Tab tab) {
++        if (!canBlockElements(tab)) return false;
++
++        assert tab != null;
++        String origin = getOrigin(tab.getUrl());
++        return !origin.isEmpty() && getRulesForOrigin(origin).length() > 0;
 +    }
 +
 +    public static void startElementBlocking(Context context, @Nullable Tab tab) {
@@ -116,7 +125,8 @@ index 0000000000..508880c3a0
 +                            }
 +                            WebContents currentWebContents = tab.getWebContents();
 +                            if (currentWebContents == null) return;
-+                            executePageScript(currentWebContents, getStartPickerScript(), null);
++                            executePageScript(
++                                    currentWebContents, getStartPickerScript(context), null);
 +                            Toast.makeText(
 +                                            context,
 +                                            R.string.ursus_element_blocker_pick_hint,
@@ -125,6 +135,25 @@ index 0000000000..508880c3a0
 +                            pollForSelection(
 +                                    context.getApplicationContext(), tab, origin, POLL_ATTEMPTS);
 +                        });
++    }
++
++    public static void showAll(Context context, @Nullable Tab tab) {
++        if (!canBlockElements(tab)) {
++            Toast.makeText(context, R.string.ursus_element_blocker_unavailable, Toast.LENGTH_SHORT)
++                    .show();
++            return;
++        }
++
++        assert tab != null;
++        WebContents webContents = tab.getWebContents();
++        assert webContents != null;
++        String origin = getOrigin(tab.getUrl());
++        if (origin.isEmpty()) return;
++
++        JSONArray selectors = getRulesForOrigin(origin);
++        getPrefs().edit().remove(origin).apply();
++        executePageScript(webContents, getShowAllScript(selectors), null);
++        Toast.makeText(context, R.string.ursus_element_blocker_restored, Toast.LENGTH_SHORT).show();
 +    }
 +
 +    public static void applyRules(@Nullable Tab tab) {
@@ -258,7 +287,10 @@ index 0000000000..508880c3a0
 +                + "(document.head||document.documentElement).appendChild(style);}"
 +                + "style.textContent=selectors.map(s=>s+'{display:none!important;}').join('\\n');"
 +                + "function hide(){selectors.forEach(s=>{try{document.querySelectorAll(s).forEach("
-+                + "e=>e.style.setProperty('display','none','important'));}catch(e){}});}"
++                + "e=>{if(!e.hasAttribute('data-ursus-original-display'))"
++                + "e.setAttribute('data-ursus-original-display',e.style.display||'');"
++                + "e.setAttribute('data-ursus-manual-blocked','1');"
++                + "e.style.setProperty('display','none','important');});}catch(e){}});}"
 +                + "hide();"
 +                + "if(window.__ursusManualAdBlockObserver)window.__ursusManualAdBlockObserver.disconnect();"
 +                + "window.__ursusManualAdBlockObserver=new MutationObserver(hide);"
@@ -269,24 +301,61 @@ index 0000000000..508880c3a0
 +                + ");";
 +    }
 +
-+    private static String getStartPickerScript() {
++    private static String getShowAllScript(JSONArray selectors) {
++        return "(function(selectors){"
++                + "const id='ursus-manual-adblock-style';"
++                + "if(window.__ursusManualAdBlockObserver){window.__ursusManualAdBlockObserver.disconnect();"
++                + "window.__ursusManualAdBlockObserver=null;}"
++                + "const style=document.getElementById(id);if(style)style.remove();"
++                + "function restore(e){if(!e)return;"
++                + "if(e.hasAttribute('data-ursus-original-display')){"
++                + "e.style.display=e.getAttribute('data-ursus-original-display')||'';"
++                + "}else if(e.style&&e.style.display==='none'){e.style.display='';}"
++                + "e.removeAttribute('data-ursus-original-display');"
++                + "e.removeAttribute('data-ursus-manual-blocked');}"
++                + "document.querySelectorAll('[data-ursus-manual-blocked]').forEach(restore);"
++                + "selectors.forEach(s=>{try{document.querySelectorAll(s).forEach(restore);}catch(e){}});"
++                + "})("
++                + selectors
++                + ");";
++    }
++
++    private static String getStartPickerScript(Context context) {
 +        return "(function(){"
 +                + "if(window.__ursusElementPickerCleanup)window.__ursusElementPickerCleanup();"
 +                + "const key='"
 +                + LAST_SELECTOR_KEY
 +                + "';"
++                + "const prompt="
++                + jsonString(context.getString(R.string.ursus_element_blocker_confirm_hint))
++                + ";"
++                + "const blockLabel="
++                + jsonString(context.getString(R.string.ursus_element_blocker_confirm_block))
++                + ";"
++                + "const cancelLabel="
++                + jsonString(context.getString(R.string.ursus_element_blocker_confirm_cancel))
++                + ";"
 +                + "const esc=s=>(window.CSS&&CSS.escape)?CSS.escape(s):String(s).replace(/[^a-zA-Z0-9_-]/g,'\\\\$&');"
 +                + "const style=document.createElement('style');style.id='ursus-element-picker-style';"
-+                + "style.textContent='.__ursus-picker-outline{outline:3px solid #4cc38a!important;outline-offset:2px!important;}#ursus-picker-toast{position:fixed;left:16px;right:16px;bottom:24px;z-index:2147483647;background:#17201d;color:#fff;border:1px solid #4cc38a;border-radius:10px;padding:12px 14px;font:14px sans-serif;text-align:center;}#ursus-picker-cancel{margin-left:12px;color:#8ab4ff;text-decoration:underline;}';"
++                + "style.textContent='.__ursus-picker-outline{outline:3px solid #4cc38a!important;outline-offset:2px!important;}#ursus-picker-panel{position:fixed;left:16px;right:16px;bottom:24px;z-index:2147483647;background:#17201d;color:#fff;border:1px solid #4cc38a;border-radius:10px;padding:12px 14px;font:14px sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.35);}#ursus-picker-message{text-align:center;margin-bottom:10px;}#ursus-picker-actions{display:flex;gap:10px;justify-content:center;}#ursus-picker-actions button{appearance:none;border:1px solid #4cc38a;border-radius:8px;padding:8px 14px;background:#24322d;color:#fff;font:14px sans-serif;}#ursus-picker-block{background:#1f7f43!important;border-color:#88d49f!important;}';"
 +                + "document.documentElement.appendChild(style);"
-+                + "const toast=document.createElement('div');toast.id='ursus-picker-toast';"
-+                + "toast.innerHTML='Коснитесь элемента, который нужно скрыть <span id=\"ursus-picker-cancel\">Отмена</span>';"
-+                + "document.documentElement.appendChild(toast);"
++                + "const panel=document.createElement('div');panel.id='ursus-picker-panel';"
++                + "const message=document.createElement('div');message.id='ursus-picker-message';"
++                + "message.textContent=prompt;"
++                + "const actions=document.createElement('div');actions.id='ursus-picker-actions';"
++                + "const block=document.createElement('button');block.id='ursus-picker-block';"
++                + "block.textContent=blockLabel;"
++                + "const cancelButton=document.createElement('button');cancelButton.id='ursus-picker-cancel';"
++                + "cancelButton.textContent=cancelLabel;"
++                + "actions.appendChild(block);actions.appendChild(cancelButton);"
++                + "panel.appendChild(message);panel.appendChild(actions);"
++                + "document.documentElement.appendChild(panel);"
 +                + "let current=null;"
 +                + "function cleanup(){if(current)current.classList.remove('__ursus-picker-outline');"
 +                + "document.removeEventListener('touchstart',onTouch,true);"
 +                + "document.removeEventListener('click',onClick,true);"
-+                + "toast.remove();style.remove();window.__ursusElementPickerCleanup=null;}"
++                + "panel.remove();style.remove();window.__ursusElementPickerCleanup=null;}"
++                + "function insidePanel(el){return el&&(el===panel||panel.contains(el));}"
 +                + "function selector(el){if(!el||el===document.documentElement||el===document.body)return '';"
 +                + "if(el.id)return '#'+esc(el.id);"
 +                + "const path=[];while(el&&el.nodeType===1&&el!==document.body){"
@@ -298,23 +367,27 @@ index 0000000000..508880c3a0
 +                + "const joined=path.join('>');try{if(document.querySelectorAll(joined).length===1)return joined;}catch(e){}"
 +                + "el=el.parentElement;}return path.join('>');}"
 +                + "function pick(x,y){let el=document.elementFromPoint(x,y);"
-+                + "if(!el||el.id==='ursus-picker-toast'||el.id==='ursus-picker-cancel')return;"
++                + "if(!el||insidePanel(el))return;"
 +                + "if(current)current.classList.remove('__ursus-picker-outline');current=el;"
 +                + "current.classList.add('__ursus-picker-outline');}"
-+                + "function finish(el){const s=selector(el);cleanup();if(s){try{document.querySelectorAll(s).forEach(e=>e.style.setProperty('display','none','important'));}catch(e){}sessionStorage.setItem(key,s);}}"
++                + "function finish(el){const s=selector(el);cleanup();if(s){try{document.querySelectorAll(s).forEach(e=>{if(!e.hasAttribute('data-ursus-original-display'))e.setAttribute('data-ursus-original-display',e.style.display||'');e.setAttribute('data-ursus-manual-blocked','1');e.style.setProperty('display','none','important');});}catch(e){}sessionStorage.setItem(key,s);}}"
 +                + "function cancel(){cleanup();sessionStorage.setItem(key,'__cancelled__');}"
 +                + "function onTouch(e){if(!e.changedTouches.length)return;const t=e.changedTouches[0];pick(t.clientX,t.clientY);}"
 +                + "function onClick(e){e.preventDefault();e.stopPropagation();"
 +                + "if(e.target&&e.target.id==='ursus-picker-cancel'){cancel();return;}"
-+                + "finish(current||e.target);}"
++                + "if(e.target&&e.target.id==='ursus-picker-block'){finish(current);return;}"
++                + "if(insidePanel(e.target))return;"
++                + "pick(e.clientX,e.clientY);}"
 +                + "document.addEventListener('touchstart',onTouch,true);"
 +                + "document.addEventListener('click',onClick,true);"
-+                + "document.getElementById('ursus-picker-cancel').addEventListener('click',cancel,true);"
 +                + "window.__ursusElementPickerCleanup=cleanup;"
 +                + "})()";
 +    }
++
++    private static String jsonString(String value) {
++        return JSONObject.quote(value);
++    }
 +}
-
 diff --git a/chrome/android/java/src/org/chromium/chrome/browser/app/ChromeActivity.java b/chrome/android/java/src/org/chromium/chrome/browser/app/ChromeActivity.java
 index 22583e15c8..569eb0bd97 100644
 --- a/chrome/android/java/src/org/chromium/chrome/browser/app/ChromeActivity.java
@@ -336,7 +409,7 @@ index 22583e15c8..569eb0bd97 100644
  
                      @Override
 diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java b/chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java
-index 630653e4a3..a708e1bee7 100644
+index 630653e4a3..2505273301 100644
 --- a/chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java
 +++ b/chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java
 @@ -30,6 +30,7 @@ import org.chromium.build.annotations.Nullable;
@@ -347,31 +420,37 @@ index 630653e4a3..a708e1bee7 100644
  import org.chromium.chrome.browser.app.appmenu.AppMenuItemUtils;
  import org.chromium.chrome.browser.app.appmenu.AppMenuPropertiesDelegateImpl;
  import org.chromium.chrome.browser.bookmarks.BookmarkImageFetcher;
-@@ -488,6 +489,11 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
+@@ -488,6 +489,14 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
          // Find in page
          if (shouldShowFindInPageItem(currentTab)) modelList.add(buildFindInPageItem(currentTab));
  
 +        // Block element
 +        if (ManualAdBlocker.canBlockElements(currentTab)) {
 +            modelList.add(buildBlockAdElementItem(shouldShowIconBeforeItem));
++            if (ManualAdBlocker.hasRules(currentTab)) {
++                modelList.add(buildShowBlockedElementsItem(shouldShowIconBeforeItem));
++            }
 +        }
 +
          // Lens Overlay
          if (shouldShowLensOverlayItem(currentTab)) modelList.add(buildLensOverlayItem(currentTab));
  
-@@ -697,6 +703,11 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
+@@ -697,6 +706,14 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
          // Find in page
          if (shouldShowFindInPageItem(currentTab)) modelList.add(buildFindInPageItem(currentTab));
  
 +        // Block element
 +        if (ManualAdBlocker.canBlockElements(currentTab)) {
 +            modelList.add(buildBlockAdElementItem(shouldShowIconBeforeItem));
++            if (ManualAdBlocker.hasRules(currentTab)) {
++                modelList.add(buildShowBlockedElementsItem(shouldShowIconBeforeItem));
++            }
 +        }
 +
          // Lens Overlay
          if (shouldShowLensOverlayItem(currentTab)) modelList.add(buildLensOverlayItem(currentTab));
  
-@@ -1592,6 +1603,18 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
+@@ -1592,6 +1609,30 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
                          isMenuIconAtStart()));
      }
  
@@ -387,11 +466,23 @@ index 630653e4a3..a708e1bee7 100644
 +                        isMenuIconAtStart()));
 +    }
 +
++    private ListItem buildShowBlockedElementsItem(boolean showIcon) {
++        return new ListItem(
++                AppMenuHandler.AppMenuItemType.STANDARD,
++                AppMenuItemUtils.buildModelForStandardMenuItem(
++                        mContext,
++                        getAppMenuItemTheme(),
++                        R.id.show_blocked_elements_menu_id,
++                        R.string.menu_show_blocked_elements,
++                        showIcon ? R.drawable.btn_toolbar_reload : Resources.ID_NULL,
++                        isMenuIconAtStart()));
++    }
++
      private boolean shouldShowLensOverlayItem(@Nullable Tab currentTab) {
          return LensOverlayTabHelper.shouldShowLensOverlay(currentTab);
      }
 diff --git a/chrome/android/java/src/org/chromium/chrome/browser/ui/RootUiCoordinator.java b/chrome/android/java/src/org/chromium/chrome/browser/ui/RootUiCoordinator.java
-index b383dd73f2..6a3c68f49f 100644
+index b383dd73f2..dbcd93d431 100644
 --- a/chrome/android/java/src/org/chromium/chrome/browser/ui/RootUiCoordinator.java
 +++ b/chrome/android/java/src/org/chromium/chrome/browser/ui/RootUiCoordinator.java
 @@ -59,6 +59,7 @@ import org.chromium.chrome.browser.ActivityUtils;
@@ -402,13 +493,17 @@ index b383dd73f2..6a3c68f49f 100644
  import org.chromium.chrome.browser.app.tabmodel.ArchivedTabModelOrchestrator;
  import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
  import org.chromium.chrome.browser.autofill.anchored_dialog.AnchoredDialogCoordinator;
-@@ -1812,6 +1813,10 @@ public class RootUiCoordinator
+@@ -1812,6 +1813,14 @@ public class RootUiCoordinator
          if (id == R.id.show_menu && mAppMenuCoordinator != null) {
              mAppMenuCoordinator.showAppMenuForKeyboardEvent();
              return true;
 +        } else if (id == R.id.block_ad_element_menu_id) {
 +            ManualAdBlocker.startElementBlocking(mActivity, mActivityTabProvider.get());
 +            RecordUserAction.record("MobileMenuBlockAdElement");
++            return true;
++        } else if (id == R.id.show_blocked_elements_menu_id) {
++            ManualAdBlocker.showAll(mActivity, mActivityTabProvider.get());
++            RecordUserAction.record("MobileMenuShowBlockedElements");
 +            return true;
          } else if (id == R.id.find_in_page_id) {
              Tab tab = mActivityTabProvider.get();
@@ -417,18 +512,33 @@ diff --git a/chrome/browser/ui/android/strings/android_chrome_strings.grd b/chro
 index e8b3cd44ec..5961853f42 100644
 --- a/chrome/browser/ui/android/strings/android_chrome_strings.grd
 +++ b/chrome/browser/ui/android/strings/android_chrome_strings.grd
-@@ -4342,6 +4342,21 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the browser
+@@ -4342,6 +4342,36 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the browser
        <message name="IDS_MENU_FIND_IN_PAGE" desc="Menu item allowing users to find text within the current page. [CHAR_LIMIT=27]">
          Find in page
        </message>
 +      <message name="IDS_MENU_BLOCK_AD_ELEMENT" desc="Menu item allowing users to manually hide an element on the current page. [CHAR_LIMIT=32]">
 +        Заблокировать элемент
 +      </message>
++      <message name="IDS_MENU_SHOW_BLOCKED_ELEMENTS" desc="Menu item allowing users to restore manually hidden elements on the current page. [CHAR_LIMIT=32]">
++        Показать все
++      </message>
 +      <message name="IDS_URSUS_ELEMENT_BLOCKER_PICK_HINT" desc="Toast shown when manual element blocking mode starts.">
 +        Коснитесь элемента, который нужно скрыть
 +      </message>
++      <message name="IDS_URSUS_ELEMENT_BLOCKER_CONFIRM_HINT" desc="Text shown by the manual element blocker confirmation prompt.">
++        Скрыть выбранный элемент?
++      </message>
++      <message name="IDS_URSUS_ELEMENT_BLOCKER_CONFIRM_BLOCK" desc="Button label confirming manual element blocking.">
++        Скрыть
++      </message>
++      <message name="IDS_URSUS_ELEMENT_BLOCKER_CONFIRM_CANCEL" desc="Button label cancelling manual element blocking.">
++        Отмена
++      </message>
 +      <message name="IDS_URSUS_ELEMENT_BLOCKER_SAVED" desc="Toast shown after a manual element blocking rule is saved.">
 +        Элемент скрыт
++      </message>
++      <message name="IDS_URSUS_ELEMENT_BLOCKER_RESTORED" desc="Toast shown after manual element blocking rules are cleared for the current site.">
++        Элементы снова показаны
 +      </message>
 +      <message name="IDS_URSUS_ELEMENT_BLOCKER_CANCELLED" desc="Toast shown when manual element blocking mode is cancelled.">
 +        Блокировка отменена
