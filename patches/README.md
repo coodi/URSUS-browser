@@ -13,6 +13,7 @@ russian_ca_chromium.patch
 russian_ca_indicator_android.patch
 russian_ca_management_android.patch
 manual_ad_blocker_android.patch
+zz_android_apk_size_optimization.patch
 ```
 
 `android_app_name.patch` changes the Android Chromium application label and
@@ -66,3 +67,8 @@ origin, and reapplies stored selectors on future page loads. When rules exist
 for the current origin, `Показать все` clears them and restores hidden elements.
 This hides page elements only; it does not block requests or change certificate
 validation.
+
+`zz_android_apk_size_optimization.patch` keeps release APK artifacts small by
+compressing the largest bundled native libraries in `chrome_public_apk` and
+setting `android:extractNativeLibs="true"` so Android extracts them at install
+time. This trades a smaller downloadable APK for a larger installed footprint.

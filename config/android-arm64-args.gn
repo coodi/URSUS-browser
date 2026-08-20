@@ -1,8 +1,12 @@
 target_os = "android"
 target_cpu = "arm64"
-is_debug = true
+is_official_build = true
+is_debug = false
 is_component_build = false
-symbol_level = 1
+symbol_level = 0
+blink_symbol_level = 0
+v8_symbol_level = 0
+chrome_pgo_phase = 0
 chrome_public_manifest_package = "com.ursus.browser"
 
 # Keep Chromium security mechanisms enabled. Do not disable sandbox, site
